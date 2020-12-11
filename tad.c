@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <float.h>
 
 //Estrutura que define as arestas entre os nós do grafo.
 typedef struct route{
@@ -59,7 +60,7 @@ City* createWorld(int n){
 
 //  Retorno:
 //      Valor de controle para identificar se a aresta foi inserida.
-//      Se 0 - Cidade inserida com sucesso;
+//      Se 0 - Estrada inserida com sucesso;
 //      Se -1 - Falha na alocação;
 //      Se 1 - Aresta já existente.
 int add_edge(City* world, int start, int finish, float dist){
@@ -84,16 +85,17 @@ int add_edge(City* world, int start, int finish, float dist){
     else{
         aux = world[start].next;
 
-        while(aux->next_city != NULL){
-            if(aux->to_index == finish)
-                return 1;
+        while(aux->next_city != NULL && aux->to_index != finish)
+            aux = aux->next_city;
 
-            else{
-                aux = aux->next_city;
-            }
+        if(aux->to_index == finish){
+            free(new_road);
+            return 1;
         }
 
-        aux->next_city = new_road;
+        else if(aux->next_city == NULL)
+            aux->next_city = new_road;
+
     }
 
     return 0;
@@ -221,6 +223,160 @@ int del_road(City* world, int start, int finish){
     }
 }
 
+// Função que identifica a cidade menos vulnerável do mundo.
+
+//  Parâmetros:
+//      City* world - Mundo;
+//      int n - Número de cidades no mundo;
+//      int* idx - Ponteiro pra variável que recebe o índice da cidade menos vulnerável;
+//      int* v_idx - Ponteiro pra variável que recebe o índice de resiliência da cidade.
+
+//  Retorno:
+//      Valor de controle para identificar se existe alguma cidade isolada.
+//      Se 0 - Não existe cidade isolada;
+//      Se -1 - Existe cidade isolada.
+void vuln(City* world, int n, int* idx, float* v_idx){
+
+    int i;
+
+    float* v_index;
+
+    Route* aux;
+
+    v_index = (float*)calloc(n, sizeof(float));
+
+    for(i=0; i<n; i++){
+        v_index[i] += world[i].heroes;
+
+        if(world[i].next != NULL){
+            aux = world[i].next;
+
+            while(aux != NULL){
+                v_index[aux->to_index] += (float)world[i].heroes/aux->length;
+                aux = aux->next_city;
+            }
+        }
+    }
+
+    *idx = 0;
+    *v_idx = FLT_MAX;
+
+    for(i=0; i<n; i++){
+        if(v_index[i] < *v_idx){
+            *v_idx = v_index[i];
+            *idx = i;
+        }
+    }
+
+    free(v_index);
+
+    return;
+
+}
+
+// Função que acusa se existem cidades isoladas no mapa.
+// Uma cidade é definida como "isolada" se nenhuma outra cidade possuir rota para ela.
+
+//  Parâmetros:
+//      City* world - Mundo;
+//      int n - Número de cidades no mundo;
+
+//  Retorno:
+//      (void)
+int chc_alone(City* world, int n){
+
+    int i;
+
+    int* has_road;
+
+    Route* aux;
+
+    has_road = (int*)calloc(n, sizeof(int));
+
+    for(i=0; i<n; i++){
+        if(world[i].next != NULL){
+            aux = world[i].next;
+
+            while(aux != NULL){
+                has_road[aux->to_index] = 1;
+                aux = aux->next_city;
+            }
+        }
+    }
+
+    for(i=0; i<n; i++){
+        if(has_road[i] == 0){
+            free(has_road);
+            return 1;
+        }
+    }
+
+    free(has_road);
+    return 0;
+
+}
+
+// Função que identifica a cidade onde será alocada a sede.
+// Esta cidade é definida como a cidade como o maior índice de resiliência.
+// Importante observar que só é possível alocar sede em um mundo que não possua
+//      cidades isoladas.
+
+//  Parâmetros:
+//      City* world - Mundo;
+//      int n - Número de cidades no mundo;
+//      int* idx - Ponteiro pra variável que recebe o índice da cidade mais vulnerável.
+//                  Se a cidade retornada for -1, existem cidades isoladas no mundo;
+//      int* v_idx - Ponteiro pra variável que recebe o índice de resiliência da cidade.
+
+//  Retorno:
+//      (void)
+void find_host(City* world, int n, int* idx, float* v_idx){
+
+    int i;
+
+    float* v_index;
+
+    Route* aux;
+
+    i = chc_alone(world, n);
+
+    if(i != 0){
+        *idx = -1;
+        *v_idx = 0;
+        return;
+    }
+
+    else{
+
+        v_index = (float*)calloc(n, sizeof(float));
+
+        for(i=0; i<n; i++){
+            v_index[i] += world[i].heroes;
+
+            if(world[i].next != NULL){
+                aux = world[i].next;
+
+                while(aux != NULL){
+                    v_index[aux->to_index] += (float)world[i].heroes/aux->length;
+                    aux = aux->next_city;
+                }
+            }
+        }
+
+        *idx = -1;
+        *v_idx = 0;
+
+        for(i=0; i<n; i++){
+            if(v_index[i] > *v_idx){
+                *v_idx = v_index[i];
+                *idx = i;
+            }
+        }
+
+        free(v_index);
+    }
+}
+
 // Função que imprime todas as informações de determinada cidade.
 // Imprime o número de heróis por cidade e as estradas partindo
 // de cada cidade para cada uma de destino, e suas distâncias.
@@ -234,12 +390,18 @@ int del_road(City* world, int start, int finish){
 void print_info(City* world, int n){
 
     int i;
+    float* v_index;
+
+    v_index = (float*)calloc(n, sizeof(float));
+
     Route* aux;
 
     printf("Informacoes sobre o mundo!");
 
     for(i=0; i<n; i++){
         printf("\nA cidade %d possui %d super herois;\n", i, world[i].heroes);
+
+        v_index[i] += world[i].heroes;
 
         if(world[i].next == NULL){
             printf("\tEsta cidade nao possui rotas para nenhuma outra!\n");
@@ -249,12 +411,21 @@ void print_info(City* world, int n){
             aux = world[i].next;
 
             while(aux != NULL){
+                v_index[aux->to_index] += (float)world[i].heroes/aux->length;
                 printf("\tEsta cidade esta conectada com a cidade %d, distantes %.2f unidades.\n",
                        aux->to_index, aux->length);
                aux = aux->next_city;
             }
         }
     }
+
+    printf("\n");
+
+    for(i=0; i<n; i++){
+        printf("\nA cidade %d possui indice de resiliencia %.2f.\n", i, v_index[i]);
+    }
+
+    free(v_index);
 
     return;
 
@@ -267,9 +438,9 @@ void print_info(City* world, int n){
 
 //  Retorno:
 //      void.
-void free_edge(struct route* next){
+void free_edge(Route* next){
 
-    while(next->next_city != NULL){
+    if(next->next_city != NULL){
         free_edge(next->next_city);
     }
 
